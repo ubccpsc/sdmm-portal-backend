@@ -369,16 +369,16 @@ export class GitHubActions {
      *  NOTE: THIS IS NOT PAGINATED AND THIS SHOULD BE FIXED
      *
      * @param {string} org
-     * @returns {Promise<string>}
+     * @returns {Promise<string[]>}
      */
-    public listRepos(org: string): Promise<string> {
+    public listReposNOPAGING(org: string): Promise<string[]> {
         let ctx = this;
 
         Log.info("GitHubAction::listRepos( " + org + " ) - start");
         return new Promise(function (fulfill, reject) {
 
             // GET /orgs/:org/repos
-            const uri = ctx.apiPath + '/orgs/' + org + '/repos?per_page=100';
+            const uri = ctx.apiPath + '/orgs/' + org + '/repos?per_page=10';
             const options = {
                 method:  'GET',
                 uri:     uri,
@@ -391,15 +391,118 @@ export class GitHubActions {
 
             rp(options).then(function (body: any) {
                 Log.info("GitHubAction::listRepos(..) - success; body: " + body);
-                fulfill(JSON.parse(body));
+                const names: string[] = [];
+                for (const record of JSON.parse(body)) {
+                    names.push(record.name);
+                }
+                fulfill(names);
             }).catch(function (err: any) {
                 Log.error("GitHubAction::listRepos(..) - ERROR: " + JSON.stringify(err));
                 reject(err);
             });
-
         });
     }
 
+    /**
+     *
+     * Get the full list of repos in an org.
+     *
+     * WARNING: if the org has lots of repos this will be slow.
+     *
+     * @param {string} org
+     * @returns {Promise<string[]>}
+     */
+    public listRepos(org: string): Promise<string[]> {
+        let ctx = this;
+
+        Log.info("GitHubAction::listRepos( " + org + " ) - start");
+        return new Promise(function (fulfill, reject) {
+
+            // GET /orgs/:org/repos
+            const uri = ctx.apiPath + '/orgs/' + org + '/repos?per_page=10';
+            const options = {
+                method:                  'GET',
+                uri:                     uri,
+                headers:                 {
+                    'Authorization': ctx.gitHubAuthToken,
+                    'User-Agent':    ctx.gitHubUserName,
+                    'Accept':        'application/json'
+                },
+                resolveWithFullResponse: true,
+                json:                    true
+            };
+
+            rp(options).then(function (fullResponse: any) {
+
+                let reposRaw: any[] = [];
+                const paginationPromises: any[] = [];
+                if (typeof fullResponse.headers.link !== 'undefined') {
+
+                    // first save the responses from the first page:
+                    reposRaw = fullResponse.body;
+
+                    let lastPage: number = -1;
+                    const linkText = fullResponse.headers.link;
+                    const linkParts = linkText.split(',');
+
+                    for (const p of linkParts) {
+                        const pparts = p.split(';');
+                        if (pparts[1].indexOf('last')) {
+                            var pText = pparts[0].split('&page=')[1];
+                            lastPage = pText.match(/\d+/)[0];
+                        }
+                    }
+
+                    let pageBase = '';
+                    for (const p of linkParts) {
+                        var pparts = p.split(';');
+                        if (pparts[1].indexOf('next')) {
+                            var pText = pparts[0].split('&page=')[0].trim();
+                            pText = pText.substring(1);
+                            pText = pText + "&page=";
+                            pageBase = pText;
+                        }
+                    }
+
+                    Log.trace("GitHubAction::listRepos(..) - handling pagination; # pages: " + lastPage);
+
+                    for (let i = 2; i <= lastPage; i++) {
+                        // start at 2 because we already have the first page
+                        const page = pageBase + i;
+                        options.uri = page;
+                        paginationPromises.push(rp(options));
+                    }
+                } else {
+                    // don't put anything on the paginationPromise if it isn't paginated
+                    reposRaw = fullResponse.body;
+                }
+
+                // Log.trace("GitHubAction::listRepos(..) - before all, raw count: " + reposRaw.length);
+                Promise.all(paginationPromises).then(function (bodies: any[]) {
+                    // Log.trace("GitHubAction::listRepos(..) - start of all, raw count: " + reposRaw.length);
+                    const repos: string[] = [];
+                    for (const body of bodies) {
+                        reposRaw = reposRaw.concat(body.body);
+                    }
+                    Log.trace("GitHubAction::listRepos(..) - total repo count: " + reposRaw.length);
+
+                    for (const repo of reposRaw) {
+                        let name = repo.name;
+                        repos.push(name);
+                    }
+
+                    fulfill(repos);
+                }).catch(function (err) {
+                    Log.error("GitHubAction::listRepos(..) - ERROR (inner): " + err);
+                    reject(err);
+                });
+
+            }).catch(function (err) {
+                Log.error("GitHubAction::listRepos(..) - ERROR (outer): " + err);
+                reject(err);
+            });
+        });
+    }
 
     /**
      *
@@ -434,7 +537,7 @@ export class GitHubActions {
      * @param {string} org
      * @returns {Promise<string>}
      */
-    private listTeamsSingleOBSOLETE(org: string): Promise<{ id: number, name: string }[]> {
+    private listTeamsNOPAGING(org: string): Promise<{ id: number, name: string }[]> {
         let ctx = this;
 
         Log.info("GitHubAction::listTeams( " + org + " ) - start");
@@ -482,7 +585,7 @@ export class GitHubActions {
     public listTeams(org: string): Promise<{ id: number, name: string }[]> {
         let ctx = this;
 
-        Log.info("GitHubManager::listTeams(..) - start");
+        Log.info("GithubAction::listTeams(..) - start");
         return new Promise(function (fulfill, reject) {
 
             const uri = ctx.apiPath + '/orgs/' + org + '/teams?per_page=100';
@@ -500,74 +603,61 @@ export class GitHubActions {
 
             rp(options).then(function (fullResponse: any) {
 
-                var teamsRaw: any[] = [];
-
-                var paginationPromises: any[] = [];
-
+                let teamsRaw: any[] = [];
+                const paginationPromises: any[] = [];
                 if (typeof fullResponse.headers.link !== 'undefined') {
 
                     // first save the responses from the first page:
                     teamsRaw = fullResponse.body;
 
-                    var lastPage: number = -1;
-                    var linkText = fullResponse.headers.link;
-                    var linkParts = linkText.split(',');
+                    let lastPage: number = -1;
+                    const linkText = fullResponse.headers.link;
+                    const linkParts = linkText.split(',');
 
-                    for (let p of linkParts) {
-                        var pparts = p.split(';');
+                    for (const p of linkParts) {
+                        const pparts = p.split(';');
                         if (pparts[1].indexOf('last')) {
                             var pText = pparts[0].split('&page=')[1];
                             lastPage = pText.match(/\d+/)[0];
-                            // Log.trace('last page: ' + lastPage);
                         }
                     }
 
                     let pageBase = '';
-                    for (let p of linkParts) {
+                    for (const p of linkParts) {
                         var pparts = p.split(';');
                         if (pparts[1].indexOf('next')) {
                             var pText = pparts[0].split('&page=')[0].trim();
-                            // Log.trace('pt: ' + pText);
                             pText = pText.substring(1);
                             pText = pText + "&page=";
                             pageBase = pText;
-                            // Log.trace('page base: ' + pageBase);
                         }
                     }
 
-                    Log.trace("GitHubAction::listTeams(..) - handling pagination; #pages: " + lastPage);
+                    Log.trace("GitHubAction::listTeams(..) - handling pagination; # pages: " + lastPage);
 
-                    for (var i = 2; i <= lastPage; i++) {
-                        var page = pageBase + i;
-                        // Log.trace('page to request: ' + page);
+                    for (let i = 2; i <= lastPage; i++) {
+                        // start at 2 because we already have the first page
+                        const page = pageBase + i;
                         options.uri = page;
                         paginationPromises.push(rp(options));
                     }
-                    // Log.trace("GitHubManager::listTeams(..) - last team page: " + lastPage);
                 } else {
                     teamsRaw = fullResponse.body;
                     // don't put anything on the paginationPromise if it isn't paginated
                 }
 
-                // Log.trace("GitHubManager::listTeams(..) - before all, raw count: " + teamsRaw.length);
-
+                // Log.trace("GitHubAction::listTeams(..) - before all, raw count: " + teamsRaw.length);
                 Promise.all(paginationPromises).then(function (bodies: any[]) {
-                    let teams: any = [];
-
-                    // Log.trace("GitHubManager::listTeams(..) - start of all, raw count: " + teamsRaw.length);
-
-                    for (var body of bodies) {
+                    // Log.trace("GitHubAction::listTeams(..) - start of all, raw count: " + teamsRaw.length);
+                    const teams: any = [];
+                    for (const body of bodies) {
                         teamsRaw = teamsRaw.concat(body.body);
-                        //  Log.trace("GitHubManager::listTeams(..) - in all loop, raw count: " + teamsRaw.length);
                     }
                     Log.trace("GitHubAction::listTeams(..) - total team count: " + teamsRaw.length);
 
-                    // Log.trace("GitHubManager::creatlistTeams(..) - success: " + JSON.stringify(fullResponse.body));
-                    for (var team of teamsRaw) {
+                    for (const team of teamsRaw) {
                         let id = team.id;
                         let name = team.name;
-
-                        // Log.info("GitHubManager::listTeams(..) - team: " + JSON.stringify(team));
                         teams.push({id: id, name: name});
                     }
 
@@ -854,93 +944,93 @@ export class GitHubActions {
         });
 
         function cloneRepo() {
-            Log.info('GithubManager::importRepoFS(..)::cloneRepo() - cloning: ' + importRepo);
+            Log.info('GithubAction::importRepoFS(..)::cloneRepo() - cloning: ' + importRepo);
             return exec(`git clone ${authedImportRepo} ${tempPath}`)
                 .then(function (result: any) {
-                    Log.info('GithubManager::importRepoFS(..)::cloneRepo() - done:');
-                    Log.trace('GithubManager::importRepoFS(..)::cloneRepo() - stdout: ' + result.stdout);
+                    Log.info('GithubAction::importRepoFS(..)::cloneRepo() - done:');
+                    Log.trace('GithubAction::importRepoFS(..)::cloneRepo() - stdout: ' + result.stdout);
                     if (result.stderr) {
-                        Log.warn('GithubManager::importRepoFS(..)::cloneRepo() - stderr: ' + result.stderr);
+                        Log.warn('GithubAction::importRepoFS(..)::cloneRepo() - stderr: ' + result.stderr);
                     }
                 });
         }
 
         function enterRepoPath() {
-            Log.info('GithubManager::importRepoFS(..)::enterRepoPath() - entering: ' + tempPath);
+            Log.info('GithubAction::importRepoFS(..)::enterRepoPath() - entering: ' + tempPath);
             return exec(`cd ${tempPath}`)
                 .then(function (result: any) {
-                    Log.info('GithubManager::importRepoFS(..)::enterRepoPath() - done:');
-                    Log.trace('GithubManager::importRepoFS(..)::enterRepoPath() - stdout: ' + result.stdout);
+                    Log.info('GithubAction::importRepoFS(..)::enterRepoPath() - done:');
+                    Log.trace('GithubAction::importRepoFS(..)::enterRepoPath() - stdout: ' + result.stdout);
                     if (result.stderr) {
-                        Log.warn('GithubManager::importRepoFS(..)::enterRepoPath() - stderr: ' + result.stderr);
+                        Log.warn('GithubAction::importRepoFS(..)::enterRepoPath() - stderr: ' + result.stderr);
                     }
                 });
         }
 
         function removeGitDir() {
-            Log.info('GithubManager::importRepoFS(..)::removeGitDir() - removing .git from cloned repo');
+            Log.info('GithubAction::importRepoFS(..)::removeGitDir() - removing .git from cloned repo');
             return exec(`cd ${tempPath} && rm -rf .git`)
                 .then(function (result: any) {
-                    Log.info('GithubManager::importRepoFS(..)::removeGitDir() - done:');
-                    console.log('GithubManager::importRepoFS(..)::removeGitDir() - stdout: ', result.stdout);
-                    console.log('GithubManager::importRepoFS(..)::removeGitDir() - stderr: ', result.stderr);
+                    Log.info('GithubAction::importRepoFS(..)::removeGitDir() - done:');
+                    console.log('GithubAction::importRepoFS(..)::removeGitDir() - stdout: ', result.stdout);
+                    console.log('GithubAction::importRepoFS(..)::removeGitDir() - stderr: ', result.stderr);
                 });
         }
 
         function initGitDir() {
-            Log.info('GithubManager::importRepoFS(..)::initGitDir() - start');
+            Log.info('GithubAction::importRepoFS(..)::initGitDir() - start');
             return exec(`cd ${tempPath} && git init`)
                 .then(function (result: any) {
-                    Log.info('GithubManager::importRepoFS(..)::initGitDir() - done:');
-                    Log.trace('GithubManager::importRepoFS(..)::initGitDir() - stdout: ' + result.stdout);
+                    Log.info('GithubAction::importRepoFS(..)::initGitDir() - done:');
+                    Log.trace('GithubAction::importRepoFS(..)::initGitDir() - stdout: ' + result.stdout);
                     if (result.stderr) {
-                        Log.warn('GithubManager::importRepoFS(..)::initGitDir() - stderr: ' + result.stderr);
+                        Log.warn('GithubAction::importRepoFS(..)::initGitDir() - stderr: ' + result.stderr);
                     }
                 });
         }
 
         function changeGitRemote() {
-            Log.info('GithubManager::importRepoFS(..)::changeGitRemote() - start');
+            Log.info('GithubAction::importRepoFS(..)::changeGitRemote() - start');
             const command = `cd ${tempPath} && git remote add origin ${authedStudentRepo}.git && git fetch --all`;
             return exec(command)
                 .then(function (result: any) {
-                    Log.info('GithubManager::importRepoFS(..)::changeGitRemote() - done:');
-                    Log.trace('GithubManager::importRepoFS(..)::changeGitRemote() - stdout: ' + result.stdout);
+                    Log.info('GithubAction::importRepoFS(..)::changeGitRemote() - done:');
+                    Log.trace('GithubAction::importRepoFS(..)::changeGitRemote() - stdout: ' + result.stdout);
                     if (result.stderr) {
-                        Log.warn('GithubManager::importRepoFS(..)::changeGitRemote() - stderr: ' + result.stderr);
+                        Log.warn('GithubAction::importRepoFS(..)::changeGitRemote() - stderr: ' + result.stderr);
                     }
                 });
         }
 
         function addFilesToRepo() {
-            Log.info('GithubManager::importRepoFS(..)::addFilesToRepo() - start');
+            Log.info('GithubAction::importRepoFS(..)::addFilesToRepo() - start');
             const command = `cd ${tempPath} && git add . && git commit -m "Starter files"`;
             return exec(command)
                 .then(function (result: any) {
-                    Log.info('GithubManager::importRepoFS(..)::addFilesToRepo() - done:');
-                    Log.trace('GithubManager::importRepoFS(..)::addFilesToRepo() - stdout: ' + result.stdout);
+                    Log.info('GithubAction::importRepoFS(..)::addFilesToRepo() - done:');
+                    Log.trace('GithubAction::importRepoFS(..)::addFilesToRepo() - stdout: ' + result.stdout);
                     if (result.stderr) {
-                        Log.warn('GithubManager::importRepoFS(..)::addFilesToRepo() - stderr: ' + result.stderr);
+                        Log.warn('GithubAction::importRepoFS(..)::addFilesToRepo() - stderr: ' + result.stderr);
                     }
                 });
         }
 
         function pushToNewRepo() {
-            Log.info('GithubManager::importRepoFS(..)::pushToNewRepo() - start');
+            Log.info('GithubAction::importRepoFS(..)::pushToNewRepo() - start');
             let command = `cd ${tempPath} && git push origin master`;
             return exec(command)
                 .then(function (result: any) {
-                    Log.info('GithubManager::importRepoFS(..)::pushToNewRepo() - done: ');
-                    Log.trace('GithubManager::importRepoFS(..)::pushToNewRepo() - stdout: ' + result.stdout);
+                    Log.info('GithubAction::importRepoFS(..)::pushToNewRepo() - done: ');
+                    Log.trace('GithubAction::importRepoFS(..)::pushToNewRepo() - stdout: ' + result.stdout);
                     if (result.stderr) {
-                        Log.warn('GithubManager::importRepoFS(..)::pushToNewRepo() - stderr: ' + result.stderr);
+                        Log.warn('GithubAction::importRepoFS(..)::pushToNewRepo() - stderr: ' + result.stderr);
                     }
                 });
         }
     }
 
     private delay(ms: number): Promise<{}> {
-        // logger.info("GitHubManager::delay( " + ms + ") - start");
+        // logger.info("GithubAction::delay( " + ms + ") - start");
         return new Promise(function (resolve) {
             let fire = new Date(new Date().getTime() + ms);
             Log.info("GitHubAction::delay( " + ms + " ms ) - waiting; will trigger at " + fire.toLocaleTimeString());

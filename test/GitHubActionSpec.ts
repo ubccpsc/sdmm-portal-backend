@@ -83,19 +83,18 @@ describe("GitHubActions", () => {
 
     it.only("Should be able to list repos.", async function () {
         let val = await gh.listRepos(Test.ORGNAME);
-        Log.test('# teams: ' + val.length);
+        Log.test('# repos: ' + val.length);
         expect(val.length).to.be.greaterThan(30);
 
-        /*
-        let staffFound = false;
-        for (var t of val) {
-            if (t.name === 'staff') {
-                staffFound = true;
+        let capstoneFound = false;
+        for (var r of val) {
+            if (r === 'capstone') {
+                capstoneFound = true;
             }
         }
-        expect(staffFound).to.be.true;
-        */
-    }).timeout(TIMEOUT*10);
+        expect(capstoneFound).to.be.true;
+
+    }).timeout(TIMEOUT * 10);
 
     it("Should be able to create a repo.", async function () {
         let val = await gh.createRepo(Test.ORGNAME, REPONAME);
