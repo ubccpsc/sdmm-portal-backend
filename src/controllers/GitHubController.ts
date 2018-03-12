@@ -366,6 +366,7 @@ export class GitHubActions {
     }
 
     /**
+     *  NOTE: THIS IS NOT PAGINATED AND THIS SHOULD BE FIXED
      *
      * @param {string} org
      * @returns {Promise<string>}
@@ -377,7 +378,7 @@ export class GitHubActions {
         return new Promise(function (fulfill, reject) {
 
             // GET /orgs/:org/repos
-            const uri = ctx.apiPath + '/orgs/' + org + '/repos';
+            const uri = ctx.apiPath + '/orgs/' + org + '/repos?per_page=100';
             const options = {
                 method:  'GET',
                 uri:     uri,
@@ -428,11 +429,12 @@ export class GitHubActions {
 */
 
     /**
+     * NOTE: This does not handle pagination and should be removed.
      *
      * @param {string} org
      * @returns {Promise<string>}
      */
-    public listTeams(org: string): Promise<string> {
+    private listTeamsSingleOBSOLETE(org: string): Promise<{ id: number, name: string }[]> {
         let ctx = this;
 
         Log.info("GitHubAction::listTeams( " + org + " ) - start");
@@ -454,12 +456,131 @@ export class GitHubActions {
 
             rp(options).then(function (body: any) {
                 Log.info("GitHubAction::listTeams(..) - success; body: " + body);
-                fulfill(JSON.parse(body));
+                let rawTeams = JSON.parse(body);
+                let teams = [];
+                for (var t of rawTeams) {
+                    teams.push({id: t.id, name: t.name});
+                }
+
+                fulfill(teams);
             }).catch(function (err: any) {
                 Log.error("GitHubAction::listTeams(..) - ERROR: " + JSON.stringify(err));
                 reject(err);
             });
 
+        });
+    }
+
+    /**
+     * Lists teams. Will fail if more than 100 teams are in the organization
+     * (or Github starts to disallow forcing the per_page variable).
+     *
+     * The success callback will include the Github team objects.
+     *
+     * @returns {Promise<{}>}
+     */
+    public listTeams(org: string): Promise<{ id: number, name: string }[]> {
+        let ctx = this;
+
+        Log.info("GitHubManager::listTeams(..) - start");
+        return new Promise(function (fulfill, reject) {
+
+            const uri = ctx.apiPath + '/orgs/' + org + '/teams?per_page=100';
+            var options = {
+                method:                  'GET',
+                uri:                     uri,
+                headers:                 {
+                    'Authorization': ctx.gitHubAuthToken,
+                    'User-Agent':    ctx.gitHubUserName,
+                    'Accept':        'application/json'
+                },
+                resolveWithFullResponse: true,
+                json:                    true
+            };
+
+            rp(options).then(function (fullResponse: any) {
+
+                var teamsRaw: any[] = [];
+
+                var paginationPromises: any[] = [];
+
+                if (typeof fullResponse.headers.link !== 'undefined') {
+
+                    // first save the responses from the first page:
+                    teamsRaw = fullResponse.body;
+
+                    var lastPage: number = -1;
+                    var linkText = fullResponse.headers.link;
+                    var linkParts = linkText.split(',');
+
+                    for (let p of linkParts) {
+                        var pparts = p.split(';');
+                        if (pparts[1].indexOf('last')) {
+                            var pText = pparts[0].split('&page=')[1];
+                            lastPage = pText.match(/\d+/)[0];
+                            // Log.trace('last page: ' + lastPage);
+                        }
+                    }
+
+                    let pageBase = '';
+                    for (let p of linkParts) {
+                        var pparts = p.split(';');
+                        if (pparts[1].indexOf('next')) {
+                            var pText = pparts[0].split('&page=')[0].trim();
+                            // Log.trace('pt: ' + pText);
+                            pText = pText.substring(1);
+                            pText = pText + "&page=";
+                            pageBase = pText;
+                            // Log.trace('page base: ' + pageBase);
+                        }
+                    }
+
+                    Log.trace("GitHubAction::listTeams(..) - handling pagination; #pages: " + lastPage);
+
+                    for (var i = 2; i <= lastPage; i++) {
+                        var page = pageBase + i;
+                        // Log.trace('page to request: ' + page);
+                        options.uri = page;
+                        paginationPromises.push(rp(options));
+                    }
+                    // Log.trace("GitHubManager::listTeams(..) - last team page: " + lastPage);
+                } else {
+                    teamsRaw = fullResponse.body;
+                    // don't put anything on the paginationPromise if it isn't paginated
+                }
+
+                // Log.trace("GitHubManager::listTeams(..) - before all, raw count: " + teamsRaw.length);
+
+                Promise.all(paginationPromises).then(function (bodies: any[]) {
+                    let teams: any = [];
+
+                    // Log.trace("GitHubManager::listTeams(..) - start of all, raw count: " + teamsRaw.length);
+
+                    for (var body of bodies) {
+                        teamsRaw = teamsRaw.concat(body.body);
+                        //  Log.trace("GitHubManager::listTeams(..) - in all loop, raw count: " + teamsRaw.length);
+                    }
+                    Log.trace("GitHubAction::listTeams(..) - total team count: " + teamsRaw.length);
+
+                    // Log.trace("GitHubManager::creatlistTeams(..) - success: " + JSON.stringify(fullResponse.body));
+                    for (var team of teamsRaw) {
+                        let id = team.id;
+                        let name = team.name;
+
+                        // Log.info("GitHubManager::listTeams(..) - team: " + JSON.stringify(team));
+                        teams.push({id: id, name: name});
+                    }
+
+                    fulfill(teams);
+                }).catch(function (err) {
+                    Log.error("GitHubAction::listTeams(..) - ERROR (inner): " + err);
+                    reject(err);
+                });
+
+            }).catch(function (err: any) {
+                Log.error("GitHubAction::listTeams(..) - ERROR: " + err);
+                reject(err);
+            });
         });
     }
 

@@ -11,7 +11,7 @@ import Util from "../src/util/Util";
 import {ActionPayload, GradePayload, SDDMController} from "../src/controllers/SDDMController";
 import {GradesController} from "../src/controllers/GradesController";
 
-describe.skip("GitHubActions", () => {
+describe("GitHubActions", () => {
 
     let gh: GitHubActions;
 
@@ -66,6 +66,36 @@ describe.skip("GitHubActions", () => {
         let val = await gh.deleteRepo(Test.ORGNAME, REPONAME);
         expect(val).to.be.false;
     }).timeout(TIMEOUT);
+
+    it.only("Should be able to list teams.", async function () {
+        let val = await gh.listTeams(Test.ORGNAME);
+        Log.test('# teams: ' + val.length);
+        expect(val.length).to.be.greaterThan(30);
+
+        let staffFound = false;
+        for (var t of val) {
+            if (t.name === 'staff') {
+                staffFound = true;
+            }
+        }
+        expect(staffFound).to.be.true;
+    }).timeout(TIMEOUT);
+
+    it.only("Should be able to list repos.", async function () {
+        let val = await gh.listRepos(Test.ORGNAME);
+        Log.test('# teams: ' + val.length);
+        expect(val.length).to.be.greaterThan(30);
+
+        /*
+        let staffFound = false;
+        for (var t of val) {
+            if (t.name === 'staff') {
+                staffFound = true;
+            }
+        }
+        expect(staffFound).to.be.true;
+        */
+    }).timeout(TIMEOUT*10);
 
     it("Should be able to create a repo.", async function () {
         let val = await gh.createRepo(Test.ORGNAME, REPONAME);
