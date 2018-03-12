@@ -366,44 +366,6 @@ export class GitHubActions {
     }
 
     /**
-     *  NOTE: THIS IS NOT PAGINATED AND THIS SHOULD BE FIXED
-     *
-     * @param {string} org
-     * @returns {Promise<string[]>}
-     */
-    public listReposNOPAGING(org: string): Promise<string[]> {
-        let ctx = this;
-
-        Log.info("GitHubAction::listRepos( " + org + " ) - start");
-        return new Promise(function (fulfill, reject) {
-
-            // GET /orgs/:org/repos
-            const uri = ctx.apiPath + '/orgs/' + org + '/repos?per_page=10';
-            const options = {
-                method:  'GET',
-                uri:     uri,
-                headers: {
-                    'Authorization': ctx.gitHubAuthToken,
-                    'User-Agent':    ctx.gitHubUserName,
-                    'Accept':        'application/json'
-                }
-            };
-
-            rp(options).then(function (body: any) {
-                Log.info("GitHubAction::listRepos(..) - success; body: " + body);
-                const names: string[] = [];
-                for (const record of JSON.parse(body)) {
-                    names.push(record.name);
-                }
-                fulfill(names);
-            }).catch(function (err: any) {
-                Log.error("GitHubAction::listRepos(..) - ERROR: " + JSON.stringify(err));
-                reject(err);
-            });
-        });
-    }
-
-    /**
      *
      * Get the full list of repos in an org.
      *
@@ -412,14 +374,16 @@ export class GitHubActions {
      * @param {string} org
      * @returns {Promise<string[]>}
      */
-    public listRepos(org: string): Promise<string[]> {
+    public listRepos(org: string): Promise<{ name: string }[]> {
         let ctx = this;
 
         Log.info("GitHubAction::listRepos( " + org + " ) - start");
+        const start = Date.now();
+
         return new Promise(function (fulfill, reject) {
 
             // GET /orgs/:org/repos
-            const uri = ctx.apiPath + '/orgs/' + org + '/repos?per_page=10';
+            const uri = ctx.apiPath + '/orgs/' + org + '/repos?per_page=100';
             const options = {
                 method:                  'GET',
                 uri:                     uri,
@@ -448,16 +412,16 @@ export class GitHubActions {
                     for (const p of linkParts) {
                         const pparts = p.split(';');
                         if (pparts[1].indexOf('last')) {
-                            var pText = pparts[0].split('&page=')[1];
+                            const pText = pparts[0].split('&page=')[1];
                             lastPage = pText.match(/\d+/)[0];
                         }
                     }
 
                     let pageBase = '';
                     for (const p of linkParts) {
-                        var pparts = p.split(';');
+                        const pparts = p.split(';');
                         if (pparts[1].indexOf('next')) {
-                            var pText = pparts[0].split('&page=')[0].trim();
+                            let pText = pparts[0].split('&page=')[0].trim();
                             pText = pText.substring(1);
                             pText = pText + "&page=";
                             pageBase = pText;
@@ -465,7 +429,6 @@ export class GitHubActions {
                     }
 
                     Log.trace("GitHubAction::listRepos(..) - handling pagination; # pages: " + lastPage);
-
                     for (let i = 2; i <= lastPage; i++) {
                         // start at 2 because we already have the first page
                         const page = pageBase + i;
@@ -480,17 +443,17 @@ export class GitHubActions {
                 // Log.trace("GitHubAction::listRepos(..) - before all, raw count: " + reposRaw.length);
                 Promise.all(paginationPromises).then(function (bodies: any[]) {
                     // Log.trace("GitHubAction::listRepos(..) - start of all, raw count: " + reposRaw.length);
-                    const repos: string[] = [];
+                    const repos = [];
                     for (const body of bodies) {
                         reposRaw = reposRaw.concat(body.body);
                     }
-                    Log.trace("GitHubAction::listRepos(..) - total repo count: " + reposRaw.length);
 
                     for (const repo of reposRaw) {
                         let name = repo.name;
-                        repos.push(name);
+                        repos.push({name: name});
                     }
 
+                    Log.trace("GitHubAction::listRepos(..) - total repo count: " + reposRaw.length + "; took: " + Util.took(start));
                     fulfill(repos);
                 }).catch(function (err) {
                     Log.error("GitHubAction::listRepos(..) - ERROR (inner): " + err);
@@ -504,75 +467,6 @@ export class GitHubActions {
         });
     }
 
-    /**
-     *
-     * Returns true if the team exists, false if it doesn't. Never fails, just returns false.
-     *
-     * @param {string} org
-     * @returns {Promise<string>}
-     */
-
-    /*
-    // THIS JUST WASN'T WORKING RIGHT?
-    public teamExists(org: string, teamName: string): Promise<boolean> {
-        let ctx = this;
-
-        Log.info("GitHubAction::teamExists( " + org + " ) - start");
-        return new Promise(function (fulfill, reject) {
-            ctx.getTeamNumber(org, teamName).then(function (exists) {
-                const teamExists = exists >= 0;
-                Log.trace("GitHubAction::teamExists(..) - value: " + exists + "; returning: " + teamExists);
-                fulfill(true);
-            }).catch(function (err) {
-                Log.trace("GitHubAction::teamExists(..) - returning: false");
-                fulfill(false);
-            });
-        });
-    }
-*/
-
-    /**
-     * NOTE: This does not handle pagination and should be removed.
-     *
-     * @param {string} org
-     * @returns {Promise<string>}
-     */
-    private listTeamsNOPAGING(org: string): Promise<{ id: number, name: string }[]> {
-        let ctx = this;
-
-        Log.info("GitHubAction::listTeams( " + org + " ) - start");
-        return new Promise(function (fulfill, reject) {
-
-            // GET /orgs/:org/repos
-            const uri = ctx.apiPath + '/orgs/' + org + '/teams';
-            const options = {
-                method:  'GET',
-                uri:     uri,
-                headers: {
-                    'Authorization': ctx.gitHubAuthToken,
-                    'User-Agent':    ctx.gitHubUserName,
-                    'Accept':        'application/json'
-                }
-            };
-
-            // NOTE: do not know how this will do with paging if there are lots of teams
-
-            rp(options).then(function (body: any) {
-                Log.info("GitHubAction::listTeams(..) - success; body: " + body);
-                let rawTeams = JSON.parse(body);
-                let teams = [];
-                for (var t of rawTeams) {
-                    teams.push({id: t.id, name: t.name});
-                }
-
-                fulfill(teams);
-            }).catch(function (err: any) {
-                Log.error("GitHubAction::listTeams(..) - ERROR: " + JSON.stringify(err));
-                reject(err);
-            });
-
-        });
-    }
 
     /**
      * Lists teams. Will fail if more than 100 teams are in the organization
@@ -586,6 +480,8 @@ export class GitHubActions {
         let ctx = this;
 
         Log.info("GithubAction::listTeams(..) - start");
+        const start = Date.now();
+
         return new Promise(function (fulfill, reject) {
 
             const uri = ctx.apiPath + '/orgs/' + org + '/teams?per_page=100';
@@ -653,7 +549,6 @@ export class GitHubActions {
                     for (const body of bodies) {
                         teamsRaw = teamsRaw.concat(body.body);
                     }
-                    Log.trace("GitHubAction::listTeams(..) - total team count: " + teamsRaw.length);
 
                     for (const team of teamsRaw) {
                         let id = team.id;
@@ -661,6 +556,7 @@ export class GitHubActions {
                         teams.push({id: id, name: name});
                     }
 
+                    Log.trace("GitHubAction::listTeams(..) - total team count: " + teamsRaw.length + "; took: " + Util.took(start));
                     fulfill(teams);
                 }).catch(function (err) {
                     Log.error("GitHubAction::listTeams(..) - ERROR (inner): " + err);

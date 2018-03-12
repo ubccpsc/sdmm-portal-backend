@@ -67,7 +67,7 @@ describe("GitHubActions", () => {
         expect(val).to.be.false;
     }).timeout(TIMEOUT);
 
-    it.only("Should be able to list teams.", async function () {
+    it("Should be able to list teams.", async function () {
         let val = await gh.listTeams(Test.ORGNAME);
         Log.test('# teams: ' + val.length);
         expect(val.length).to.be.greaterThan(30);
@@ -81,14 +81,14 @@ describe("GitHubActions", () => {
         expect(staffFound).to.be.true;
     }).timeout(TIMEOUT);
 
-    it.only("Should be able to list repos.", async function () {
+    it("Should be able to list repos.", async function () {
         let val = await gh.listRepos(Test.ORGNAME);
         Log.test('# repos: ' + val.length);
         expect(val.length).to.be.greaterThan(30);
 
         let capstoneFound = false;
         for (var r of val) {
-            if (r === 'capstone') {
+            if (r.name === 'capstone') {
                 capstoneFound = true;
             }
         }
